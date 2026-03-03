@@ -91,3 +91,96 @@ def random_address_40hex() -> str:
 # ------------------------------------------------------------------------------
 
 class SPRG_ZeroAddress(Exception):
+    pass
+
+
+class SPRG_ZeroAmount(Exception):
+    pass
+
+
+class SPRG_InvalidDropBps(Exception):
+    pass
+
+
+class SPRG_InvalidFloorBps(Exception):
+    pass
+
+
+class SPRG_CooldownActive(Exception):
+    pass
+
+
+class SPRG_TriggerAlreadyFired(Exception):
+    pass
+
+
+class SPRG_GuardianOnly(Exception):
+    pass
+
+
+class SPRG_NotKeeper(Exception):
+    pass
+
+
+class SPRG_TransferFailed(Exception):
+    pass
+
+
+class SPRG_PriceStale(Exception):
+    pass
+
+
+class SPRG_Disabled(Exception):
+    pass
+
+
+class SPRG_AboveFloor(Exception):
+    pass
+
+
+class SPRG_BelowMinCooldown(Exception):
+    pass
+
+
+class SPRG_AboveMaxCooldown(Exception):
+    pass
+
+
+class SPRG_AssetNotWhitelisted(Exception):
+    pass
+
+
+class SPRG_PositionNotFound(Exception):
+    pass
+
+
+# -----------------------------------------------------------------------------
+# Data models
+# ------------------------------------------------------------------------------
+
+class TriggerKind(Enum):
+    DROP = SPRG_TRIGGER_KIND_DROP
+    FLOOR = SPRG_TRIGGER_KIND_FLOOR
+    BOTH = SPRG_TRIGGER_KIND_BOTH
+
+
+class PositionStatus(Enum):
+    ACTIVE = SPRG_STATUS_ACTIVE
+    TRIGGERED = SPRG_STATUS_TRIGGERED
+    SOLD = SPRG_STATUS_SOLD
+    DISABLED = SPRG_STATUS_DISABLED
+    COOLDOWN = SPRG_STATUS_COOLDOWN
+
+
+@dataclass
+class PriceSnapshot:
+    asset_id: str
+    price_wei: int
+    timestamp: float
+    source: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "asset_id": self.asset_id,
+            "price_wei": self.price_wei,
+            "timestamp": self.timestamp,
