@@ -463,3 +463,96 @@ class SpringaEngine:
             created_at=now,
             last_updated_at=now,
             triggered_at=0.0,
+            cooldown_until=0.0,
+            sold_amount_wei=0,
+        )
+        self._positions[pos.position_id] = pos
+        return pos
+
+    def get_position(self, position_id: str) -> Optional[Position]:
+        return self._positions.get(position_id)
+
+    def require_position(self, position_id: str) -> Position:
+        p = self.get_position(position_id)
+        if not p:
+            raise SPRG_PositionNotFound()
+        return p
+
+    def update_high_water_mark(self, position_id: str, caller: str, new_price_wei: int) -> Position:
+        pos = self.require_position(position_id)
+        if caller != self._guardian and caller != pos.owner:
+            raise SPRG_GuardianOnly()
+        if new_price_wei <= pos.high_water_mark_wei:
+            return pos
+        pos.high_water_mark_wei = new_price_wei
+        pos.floor_price_wei = compute_floor_price_wei(new_price_wei, pos.floor_bps)
+        pos.last_updated_at = time.time()
+        return pos
+
+    def disable_position(self, position_id: str, caller: str) -> Position:
+        pos = self.require_position(position_id)
+        if caller != self._guardian and caller != pos.owner:
+            raise SPRG_GuardianOnly()
+        pos.status = SPRG_STATUS_DISABLED
+        pos.last_updated_at = time.time()
+        return pos
+
+    def enable_position(self, position_id: str, caller: str) -> Position:
+        pos = self.require_position(position_id)
+        if caller != self._guardian and caller != pos.owner:
+            raise SPRG_GuardianOnly()
+        if pos.status != SPRG_STATUS_DISABLED:
+            return pos
+        pos.status = SPRG_STATUS_ACTIVE
+        pos.last_updated_at = time.time()
+        return pos
+
+    def check_and_trigger(self, position_id: str, snapshot: Optional[PriceSnapshot] = None) -> Optional[SellOrder]:
+        pos = self.require_position(position_id)
+        if pos.status != SPRG_STATUS_ACTIVE:
+            return None
+        now = time.time()
+        if pos.cooldown_until > now:
+            return None
+        snap = snapshot or self._price_feed.get_price(pos.asset_id)
+        if not snap:
+            return None
+        if not should_trigger(pos, snap):
+            return None
+        pos.status = SPRG_STATUS_TRIGGERED
+        pos.triggered_at = now
+        pos.cooldown_until = now + self._default_cooldown_sec
+        pos.last_updated_at = now
+        order = SellOrder(
+            order_id=self._next_order_id(),
+            position_id=position_id,
+            asset_id=pos.asset_id,
+            amount_wei=pos.amount_wei,
+            executed_price_wei=snap.price_wei,
+            executed_at=now,
+            status="executed",
+        )
+        self._sell_orders[order.order_id] = order
+        pos.sold_amount_wei = pos.amount_wei
+        pos.status = SPRG_STATUS_SOLD
+        return order
+
+    def scan_all_positions(self, caller: str) -> List[SellOrder]:
+        if caller != self._keeper and caller != self._guardian:
+            raise SPRG_NotKeeper()
+        executed = []
+        for pid in list(self._positions):
+            pos = self._positions[pid]
+            if pos.status != SPRG_STATUS_ACTIVE:
+                continue
+            order = self.check_and_trigger(pid)
+            if order:
+                executed.append(order)
+        return executed
+
+    def list_positions(self, owner: Optional[str] = None) -> List[Position]:
+        out = list(self._positions.values())
+        if owner:
+            owner = to_checksum_address(owner)
+            out = [p for p in out if p.owner == owner]
+        return out
