@@ -184,3 +184,96 @@ class PriceSnapshot:
             "asset_id": self.asset_id,
             "price_wei": self.price_wei,
             "timestamp": self.timestamp,
+            "source": self.source,
+        }
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "PriceSnapshot":
+        return cls(
+            asset_id=d.get("asset_id", ""),
+            price_wei=int(d.get("price_wei", 0)),
+            timestamp=float(d.get("timestamp", 0)),
+            source=d.get("source", ""),
+        )
+
+
+@dataclass
+class Position:
+    position_id: str
+    owner: str
+    asset_id: str
+    amount_wei: int
+    high_water_mark_wei: int
+    floor_price_wei: int
+    drop_bps: int
+    floor_bps: int
+    trigger_kind: int
+    status: int
+    created_at: float
+    last_updated_at: float
+    triggered_at: float
+    cooldown_until: float
+    sold_amount_wei: int
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "position_id": self.position_id,
+            "owner": self.owner,
+            "asset_id": self.asset_id,
+            "amount_wei": self.amount_wei,
+            "high_water_mark_wei": self.high_water_mark_wei,
+            "floor_price_wei": self.floor_price_wei,
+            "drop_bps": self.drop_bps,
+            "floor_bps": self.floor_bps,
+            "trigger_kind": self.trigger_kind,
+            "status": self.status,
+            "created_at": self.created_at,
+            "last_updated_at": self.last_updated_at,
+            "triggered_at": self.triggered_at,
+            "cooldown_until": self.cooldown_until,
+            "sold_amount_wei": self.sold_amount_wei,
+            "metadata": self.metadata,
+        }
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "Position":
+        return cls(
+            position_id=d.get("position_id", ""),
+            owner=d.get("owner", ""),
+            asset_id=d.get("asset_id", ""),
+            amount_wei=int(d.get("amount_wei", 0)),
+            high_water_mark_wei=int(d.get("high_water_mark_wei", 0)),
+            floor_price_wei=int(d.get("floor_price_wei", 0)),
+            drop_bps=int(d.get("drop_bps", 2000)),
+            floor_bps=int(d.get("floor_bps", 500)),
+            trigger_kind=int(d.get("trigger_kind", SPRG_TRIGGER_KIND_BOTH)),
+            status=int(d.get("status", SPRG_STATUS_ACTIVE)),
+            created_at=float(d.get("created_at", 0)),
+            last_updated_at=float(d.get("last_updated_at", 0)),
+            triggered_at=float(d.get("triggered_at", 0)),
+            cooldown_until=float(d.get("cooldown_until", 0)),
+            sold_amount_wei=int(d.get("sold_amount_wei", 0)),
+            metadata=dict(d.get("metadata", {})),
+        )
+
+
+@dataclass
+class SellOrder:
+    order_id: str
+    position_id: str
+    asset_id: str
+    amount_wei: int
+    executed_price_wei: int
+    executed_at: float
+    tx_hash: str = ""
+    status: str = "pending"
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "order_id": self.order_id,
+            "position_id": self.position_id,
+            "asset_id": self.asset_id,
+            "amount_wei": self.amount_wei,
+            "executed_price_wei": self.executed_price_wei,
+            "executed_at": self.executed_at,
