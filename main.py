@@ -370,3 +370,96 @@ class SpringaEngine:
         default_cooldown_sec: int = SPRG_DEFAULT_COOLDOWN_SEC,
         price_feed: Optional[PriceFeedBase] = None,
     ):
+        self._guardian = to_checksum_address(guardian)
+        self._treasury = to_checksum_address(treasury)
+        self._fee_sink = to_checksum_address(fee_sink)
+        self._keeper = to_checksum_address(keeper)
+        self._sentinel = to_checksum_address(sentinel)
+        self._default_cooldown_sec = default_cooldown_sec
+        self._price_feed = price_feed or MockPriceFeed()
+        self._positions: Dict[str, Position] = {}
+        self._sell_orders: Dict[str, SellOrder] = {}
+        self._whitelist: set = set()
+        self._position_id_seq = 0
+        self._order_id_seq = 0
+
+    def _next_position_id(self) -> str:
+        self._position_id_seq += 1
+        return f"SPRG_POS_{self._position_id_seq}_{int(time.time() * 1000)}"
+
+    def _next_order_id(self) -> str:
+        self._order_id_seq += 1
+        return f"SPRG_ORD_{self._order_id_seq}_{int(time.time() * 1000)}"
+
+    @property
+    def guardian(self) -> str:
+        return self._guardian
+
+    @property
+    def treasury(self) -> str:
+        return self._treasury
+
+    @property
+    def fee_sink(self) -> str:
+        return self._fee_sink
+
+    @property
+    def keeper(self) -> str:
+        return self._keeper
+
+    @property
+    def sentinel(self) -> str:
+        return self._sentinel
+
+    def add_to_whitelist(self, asset_id: str) -> None:
+        self._whitelist.add(asset_id)
+
+    def remove_from_whitelist(self, asset_id: str) -> None:
+        self._whitelist.discard(asset_id)
+
+    def is_whitelisted(self, asset_id: str) -> bool:
+        return not self._whitelist or asset_id in self._whitelist
+
+    def create_position(
+        self,
+        owner: str,
+        asset_id: str,
+        amount_wei: int,
+        initial_price_wei: int,
+        drop_bps: int = 2000,
+        floor_bps: int = 500,
+        trigger_kind: int = SPRG_TRIGGER_KIND_BOTH,
+        cooldown_sec: Optional[int] = None,
+    ) -> Position:
+        if not owner or len(owner) < 40:
+            raise SPRG_ZeroAddress()
+        if amount_wei <= 0:
+            raise SPRG_ZeroAmount()
+        if drop_bps > SPRG_MAX_DROP_BPS or drop_bps < 0:
+            raise SPRG_InvalidDropBps()
+        if floor_bps < SPRG_MIN_FLOOR_BPS or floor_bps > SPRG_BPS_DENOM:
+            raise SPRG_InvalidFloorBps()
+        if not self.is_whitelisted(asset_id):
+            raise SPRG_AssetNotWhitelisted()
+        cooldown = cooldown_sec if cooldown_sec is not None else self._default_cooldown_sec
+        if cooldown < SPRG_MIN_COOLDOWN_SEC:
+            raise SPRG_BelowMinCooldown()
+        if cooldown > SPRG_MAX_COOLDOWN_SEC:
+            raise SPRG_AboveMaxCooldown()
+
+        now = time.time()
+        floor_price_wei = compute_floor_price_wei(initial_price_wei, floor_bps)
+        pos = Position(
+            position_id=self._next_position_id(),
+            owner=to_checksum_address(owner),
+            asset_id=asset_id,
+            amount_wei=amount_wei,
+            high_water_mark_wei=initial_price_wei,
+            floor_price_wei=floor_price_wei,
+            drop_bps=drop_bps,
+            floor_bps=floor_bps,
+            trigger_kind=trigger_kind,
+            status=SPRG_STATUS_ACTIVE,
+            created_at=now,
+            last_updated_at=now,
+            triggered_at=0.0,
