@@ -277,3 +277,96 @@ class SellOrder:
             "amount_wei": self.amount_wei,
             "executed_price_wei": self.executed_price_wei,
             "executed_at": self.executed_at,
+            "tx_hash": self.tx_hash,
+            "status": self.status,
+        }
+
+
+# -----------------------------------------------------------------------------
+# Price feed abstraction
+# ------------------------------------------------------------------------------
+
+class PriceFeedBase:
+    def get_price(self, asset_id: str) -> Optional[PriceSnapshot]:
+        raise NotImplementedError
+
+    def get_prices(self, asset_ids: List[str]) -> Dict[str, PriceSnapshot]:
+        out = {}
+        for aid in asset_ids:
+            s = self.get_price(aid)
+            if s:
+                out[aid] = s
+        return out
+
+
+class MockPriceFeed(PriceFeedBase):
+    def __init__(self, prices: Optional[Dict[str, int]] = None, drift_bps: int = 0):
+        self._prices = dict(prices or {})
+        self._drift_bps = drift_bps
+
+    def set_price(self, asset_id: str, price_wei: int) -> None:
+        self._prices[asset_id] = price_wei
+
+    def get_price(self, asset_id: str) -> Optional[PriceSnapshot]:
+        p = self._prices.get(asset_id)
+        if p is None:
+            return None
+        if self._drift_bps:
+            import random
+            p = p + (p * random.randint(-self._drift_bps, self._drift_bps) // SPRG_BPS_DENOM)
+        return PriceSnapshot(asset_id=asset_id, price_wei=max(0, p), timestamp=time.time(), source="mock")
+
+
+# -----------------------------------------------------------------------------
+# Drop guard logic (price drop protection)
+# ------------------------------------------------------------------------------
+
+def compute_drop_bps(high_wei: int, current_wei: int) -> int:
+    if high_wei == 0:
+        return 0
+    if current_wei >= high_wei:
+        return 0
+    return ((high_wei - current_wei) * SPRG_BPS_DENOM) // high_wei
+
+
+def compute_floor_price_wei(high_wei: int, floor_bps: int) -> int:
+    return (high_wei * floor_bps) // SPRG_BPS_DENOM
+
+
+def should_trigger_drop(current_wei: int, high_wei: int, drop_bps: int) -> bool:
+    if high_wei == 0:
+        return False
+    return compute_drop_bps(high_wei, current_wei) >= drop_bps
+
+
+def should_trigger_floor(current_wei: int, floor_price_wei: int) -> bool:
+    return current_wei <= floor_price_wei and floor_price_wei > 0
+
+
+def should_trigger(position: Position, snapshot: PriceSnapshot) -> bool:
+    if position.status != SPRG_STATUS_ACTIVE:
+        return False
+    if position.trigger_kind == SPRG_TRIGGER_KIND_DROP:
+        return should_trigger_drop(snapshot.price_wei, position.high_water_mark_wei, position.drop_bps)
+    if position.trigger_kind == SPRG_TRIGGER_KIND_FLOOR:
+        return should_trigger_floor(snapshot.price_wei, position.floor_price_wei)
+    if position.trigger_kind == SPRG_TRIGGER_KIND_BOTH:
+        return should_trigger_drop(snapshot.price_wei, position.high_water_mark_wei, position.drop_bps) or should_trigger_floor(snapshot.price_wei, position.floor_price_wei)
+    return False
+
+
+# -----------------------------------------------------------------------------
+# Springa engine (core)
+# ------------------------------------------------------------------------------
+
+class SpringaEngine:
+    def __init__(
+        self,
+        guardian: str = SPRG_GUARDIAN_ADDRESS,
+        treasury: str = SPRG_TREASURY_ADDRESS,
+        fee_sink: str = SPRG_FEE_SINK_ADDRESS,
+        keeper: str = SPRG_KEEPER_ADDRESS,
+        sentinel: str = SPRG_SENTINEL_ADDRESS,
+        default_cooldown_sec: int = SPRG_DEFAULT_COOLDOWN_SEC,
+        price_feed: Optional[PriceFeedBase] = None,
+    ):
