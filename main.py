@@ -649,3 +649,96 @@ def compute_net_after_fee(amount_wei: int, fee_bps: int) -> int:
 TriggerCallback = Callable[[Position, PriceSnapshot, SellOrder], None]
 
 
+def run_engine_loop(
+    engine: SpringaEngine,
+    interval_sec: float = 60.0,
+    callback: Optional[TriggerCallback] = None,
+    stop_flag: Optional[Callable[[], bool]] = None,
+) -> None:
+    while stop_flag is None or not stop_flag():
+        for pos in engine.list_positions():
+            if pos.status != SPRG_STATUS_ACTIVE:
+                continue
+            order = engine.check_and_trigger(pos.position_id)
+            if order and callback:
+                snap = engine._price_feed.get_price(pos.asset_id)
+                callback(pos, snap, order)
+        time.sleep(interval_sec)
+
+
+# -----------------------------------------------------------------------------
+# Default instance and factory
+# ------------------------------------------------------------------------------
+
+def create_default_engine(
+    guardian: Optional[str] = None,
+    treasury: Optional[str] = None,
+    price_feed: Optional[PriceFeedBase] = None,
+) -> SpringaEngine:
+    return SpringaEngine(
+        guardian=guardian or SPRG_GUARDIAN_ADDRESS,
+        treasury=treasury or SPRG_TREASURY_ADDRESS,
+        price_feed=price_feed,
+    )
+
+
+# -----------------------------------------------------------------------------
+# Hex and wei formatting
+# ------------------------------------------------------------------------------
+
+def wei_to_eth(wei: int) -> float:
+    return wei / 1e18
+
+
+def eth_to_wei(eth: float) -> int:
+    return int(eth * 1e18)
+
+
+def format_wei(wei: int) -> str:
+    return f"{wei_to_eth(wei):.6f} ETH"
+
+
+def truncate_address(addr: str, head: int = 8, tail: int = 6) -> str:
+    addr = addr.replace("0x", "")
+    if len(addr) <= head + tail:
+        return "0x" + addr
+    return "0x" + addr[:head] + "..." + addr[-tail:]
+
+
+# -----------------------------------------------------------------------------
+# Position summary and reporting
+# ------------------------------------------------------------------------------
+
+def position_summary(pos: Position, current_price_wei: Optional[int] = None) -> str:
+    drop = ""
+    if current_price_wei is not None and pos.high_water_mark_wei > 0:
+        bps = compute_drop_bps(pos.high_water_mark_wei, current_price_wei)
+        drop = f" | drop_bps={bps}"
+    return (
+        f"id={pos.position_id[:20]}... owner={truncate_address(pos.owner)} "
+        f"asset={pos.asset_id} amount={pos.amount_wei} hwm={pos.high_water_mark_wei} "
+        f"floor={pos.floor_price_wei} status={pos.status}{drop}"
+    )
+
+
+def order_summary(order: SellOrder) -> str:
+    return (
+        f"id={order.order_id[:20]}... pos={order.position_id[:20]}... "
+        f"asset={order.asset_id} amount={order.amount_wei} price={order.executed_price_wei} "
+        f"at={order.executed_at} status={order.status}"
+    )
+
+
+# -----------------------------------------------------------------------------
+# Additional validation and guards
+# ------------------------------------------------------------------------------
+
+def require_guardian(engine: SpringaEngine, caller: str) -> None:
+    if to_checksum_address(caller) != engine.guardian:
+        raise SPRG_GuardianOnly()
+
+
+def require_keeper(engine: SpringaEngine, caller: str) -> None:
+    if to_checksum_address(caller) != engine.keeper and to_checksum_address(caller) != engine.guardian:
+        raise SPRG_NotKeeper()
+
