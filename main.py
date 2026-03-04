@@ -928,3 +928,96 @@ def is_keeper(engine: SpringaEngine, addr: str) -> bool:
 
 # -----------------------------------------------------------------------------
 # High-water mark update batch
+# ------------------------------------------------------------------------------
+
+def batch_update_high_water_marks(
+    engine: SpringaEngine,
+    caller: str,
+    updates: List[Tuple[str, int]],
+) -> List[Position]:
+    out = []
+    for position_id, new_price_wei in updates:
+        try:
+            pos = engine.update_high_water_mark(position_id, caller, new_price_wei)
+            out.append(pos)
+        except Exception:
+            pass
+    return out
+
+
+# -----------------------------------------------------------------------------
+# Default whitelist seeding
+# ------------------------------------------------------------------------------
+
+def seed_default_whitelist(engine: SpringaEngine, asset_ids: Optional[List[str]] = None) -> None:
+    default_assets = asset_ids or ["ETH", "WBTC", "USDC", "USDT", "DAI", "WETH"]
+    for aid in default_assets:
+        engine.add_to_whitelist(aid)
+
+
+# -----------------------------------------------------------------------------
+# Order history and replay
+# ------------------------------------------------------------------------------
+
+def orders_for_position(engine: SpringaEngine, position_id: str) -> List[SellOrder]:
+    return engine.list_orders(position_id=position_id)
+
+
+def total_sold_wei_for_position(engine: SpringaEngine, position_id: str) -> int:
+    pos = engine.get_position(position_id)
+    return pos.sold_amount_wei if pos else 0
+
+
+# -----------------------------------------------------------------------------
+# Position status display
+# ------------------------------------------------------------------------------
+
+def status_display(status: int) -> str:
+    if status == SPRG_STATUS_ACTIVE:
+        return "active"
+    if status == SPRG_STATUS_TRIGGERED:
+        return "triggered"
+    if status == SPRG_STATUS_SOLD:
+        return "sold"
+    if status == SPRG_STATUS_DISABLED:
+        return "disabled"
+    if status == SPRG_STATUS_COOLDOWN:
+        return "cooldown"
+    return "unknown"
+
+
+def trigger_kind_display(kind: int) -> str:
+    if kind == SPRG_TRIGGER_KIND_DROP:
+        return "drop"
+    if kind == SPRG_TRIGGER_KIND_FLOOR:
+        return "floor"
+    if kind == SPRG_TRIGGER_KIND_BOTH:
+        return "both"
+    return "unknown"
+
+
+# -----------------------------------------------------------------------------
+# Config validation
+# ------------------------------------------------------------------------------
+
+def validate_engine_config(config: Dict[str, Any]) -> List[str]:
+    errs = []
+    for key in ("guardian", "treasury", "fee_sink", "keeper", "sentinel"):
+        if key not in config:
+            continue
+        if not validate_address(config[key]):
+            errs.append(f"invalid address: {key}")
+    if "default_cooldown_sec" in config:
+        c = config["default_cooldown_sec"]
+        if c < SPRG_MIN_COOLDOWN_SEC or c > SPRG_MAX_COOLDOWN_SEC:
+            errs.append("default_cooldown_sec out of range")
+    return errs
+
+
+# -----------------------------------------------------------------------------
+# Constants export
+# ------------------------------------------------------------------------------
+
+__all__ = [
+    "SpringaEngine",
+    "Position",
