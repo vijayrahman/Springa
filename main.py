@@ -1114,3 +1114,96 @@ def create_position_with_preset(
 # Price staleness check
 # ------------------------------------------------------------------------------
 
+SPRG_MAX_PRICE_AGE_SEC = 3600
+
+
+def is_price_stale(snapshot: PriceSnapshot, max_age_sec: float = SPRG_MAX_PRICE_AGE_SEC) -> bool:
+    return (time.time() - snapshot.timestamp) > max_age_sec
+
+
+def require_fresh_price(snapshot: PriceSnapshot, max_age_sec: float = SPRG_MAX_PRICE_AGE_SEC) -> None:
+    if is_price_stale(snapshot, max_age_sec):
+        raise SPRG_PriceStale()
+
+
+# -----------------------------------------------------------------------------
+# Numeric safety
+# ------------------------------------------------------------------------------
+
+def safe_bps_multiply(amount_wei: int, bps: int) -> int:
+    return (amount_wei * bps) // SPRG_BPS_DENOM
+
+
+def clamp_drop_bps(bps: int) -> int:
+    return max(0, min(SPRG_MAX_DROP_BPS, bps))
+
+
+def clamp_floor_bps(bps: int) -> int:
+    return max(SPRG_MIN_FLOOR_BPS, min(SPRG_BPS_DENOM, bps))
+
+
+# -----------------------------------------------------------------------------
+# Position comparison and sorting
+# ------------------------------------------------------------------------------
+
+def sort_positions_by_created(positions: List[Position], descending: bool = True) -> List[Position]:
+    return sorted(positions, key=lambda p: p.created_at, reverse=descending)
+
+
+def sort_positions_by_drop_risk(
+    positions: List[Position],
+    price_feed: PriceFeedBase,
+    descending: bool = True,
+) -> List[Position]:
+    def risk(p: Position) -> float:
+        snap = price_feed.get_price(p.asset_id)
+        if not snap:
+            return 0.0
+        return compute_drop_bps(p.high_water_mark_wei, snap.price_wei) / SPRG_BPS_DENOM
+
+    return sorted(positions, key=risk, reverse=descending)
+
+
+# -----------------------------------------------------------------------------
+# Export state to file with version
+# ------------------------------------------------------------------------------
+
+def export_state_with_meta(engine: SpringaEngine) -> Dict[str, Any]:
+    state = engine.export_state()
+    state["_meta"] = {"version": SPRG_VERSION, "exported_at": time.time()}
+    return state
+
+
+def load_state_with_meta(engine: SpringaEngine, data: Dict[str, Any]) -> None:
+    meta = data.pop("_meta", {})
+    engine.load_state(data)
+
+
+# -----------------------------------------------------------------------------
+# Health check
+# ------------------------------------------------------------------------------
+
+def engine_health(engine: SpringaEngine) -> Dict[str, Any]:
+    config = engine.get_config()
+    errs = validate_engine_config(config)
+    return {
+        "ok": len(errs) == 0,
+        "errors": errs,
+        "position_count": len(engine.list_positions()),
+        "config_keys": list(config.keys()),
+    }
+
+
+# -----------------------------------------------------------------------------
+# Address list validation
+# ------------------------------------------------------------------------------
+
+def validate_address_list(addrs: List[str]) -> Tuple[List[str], List[str]]:
+    valid = []
+    invalid = []
+    for a in addrs:
+        if validate_address(a):
+            valid.append(to_checksum_address(a))
+        else:
+            invalid.append(a)
+    return valid, invalid
