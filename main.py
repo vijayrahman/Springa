@@ -1021,3 +1021,96 @@ def validate_engine_config(config: Dict[str, Any]) -> List[str]:
 __all__ = [
     "SpringaEngine",
     "Position",
+    "PriceSnapshot",
+    "SellOrder",
+    "PriceFeedBase",
+    "MockPriceFeed",
+    "create_default_engine",
+    "save_engine_state",
+    "load_engine_state",
+    "to_checksum_address",
+    "random_address_40hex",
+    "compute_drop_bps",
+    "compute_floor_price_wei",
+    "should_trigger_drop",
+    "should_trigger_floor",
+    "should_trigger",
+    "SPRG_VERSION",
+    "SPRG_GUARDIAN_ADDRESS",
+    "SPRG_TREASURY_ADDRESS",
+    "SPRG_FEE_SINK_ADDRESS",
+    "SPRG_KEEPER_ADDRESS",
+    "SPRG_SENTINEL_ADDRESS",
+]
+
+
+# -----------------------------------------------------------------------------
+# Event log types (for integration / indexing)
+# ------------------------------------------------------------------------------
+
+@dataclass
+class PositionCreatedEvent:
+    position_id: str
+    owner: str
+    asset_id: str
+    amount_wei: int
+    high_water_mark_wei: int
+    timestamp: float
+
+
+@dataclass
+class TriggerFiredEvent:
+    position_id: str
+    order_id: str
+    asset_id: str
+    executed_price_wei: int
+    timestamp: float
+
+
+def emit_position_created(pos: Position) -> PositionCreatedEvent:
+    return PositionCreatedEvent(
+        position_id=pos.position_id,
+        owner=pos.owner,
+        asset_id=pos.asset_id,
+        amount_wei=pos.amount_wei,
+        high_water_mark_wei=pos.high_water_mark_wei,
+        timestamp=pos.created_at,
+    )
+
+
+def emit_trigger_fired(order: SellOrder) -> TriggerFiredEvent:
+    return TriggerFiredEvent(
+        position_id=order.position_id,
+        order_id=order.order_id,
+        asset_id=order.asset_id,
+        executed_price_wei=order.executed_price_wei,
+        timestamp=order.executed_at,
+    )
+
+
+# -----------------------------------------------------------------------------
+# Threshold presets
+# ------------------------------------------------------------------------------
+
+SPRG_PRESET_CONSERVATIVE = {"drop_bps": 1000, "floor_bps": 800}
+SPRG_PRESET_MODERATE = {"drop_bps": 2000, "floor_bps": 500}
+SPRG_PRESET_AGGRESSIVE = {"drop_bps": 3500, "floor_bps": 300}
+
+
+def create_position_with_preset(
+    engine: SpringaEngine,
+    owner: str,
+    asset_id: str,
+    amount_wei: int,
+    initial_price_wei: int,
+    preset: str = "moderate",
+) -> Position:
+    presets = {"conservative": SPRG_PRESET_CONSERVATIVE, "moderate": SPRG_PRESET_MODERATE, "aggressive": SPRG_PRESET_AGGRESSIVE}
+    p = presets.get(preset, SPRG_PRESET_MODERATE)
+    return engine.create_position(owner, asset_id, amount_wei, initial_price_wei, drop_bps=p["drop_bps"], floor_bps=p["floor_bps"])
+
+
+# -----------------------------------------------------------------------------
+# Price staleness check
+# ------------------------------------------------------------------------------
+
