@@ -742,3 +742,96 @@ def require_keeper(engine: SpringaEngine, caller: str) -> None:
     if to_checksum_address(caller) != engine.keeper and to_checksum_address(caller) != engine.guardian:
         raise SPRG_NotKeeper()
 
+
+# -----------------------------------------------------------------------------
+# Batch operations
+# ------------------------------------------------------------------------------
+
+def batch_create_positions(
+    engine: SpringaEngine,
+    owner: str,
+    assets: List[Tuple[str, int, int]],
+    drop_bps: int = 2000,
+    floor_bps: int = 500,
+) -> List[Position]:
+    out = []
+    for asset_id, amount_wei, initial_price_wei in assets:
+        pos = engine.create_position(owner, asset_id, amount_wei, initial_price_wei, drop_bps=drop_bps, floor_bps=floor_bps)
+        out.append(pos)
+    return out
+
+
+def batch_check_positions(engine: SpringaEngine, position_ids: List[str]) -> List[Optional[SellOrder]]:
+    return [engine.check_and_trigger(pid) for pid in position_ids]
+
+
+# -----------------------------------------------------------------------------
+# Reporting and stats
+# ------------------------------------------------------------------------------
+
+def engine_stats(engine: SpringaEngine) -> Dict[str, Any]:
+    positions = engine.list_positions()
+    orders = engine.list_orders()
+    return {
+        "position_count": len(positions),
+        "order_count": len(orders),
+        "active_count": sum(1 for p in positions if p.status == SPRG_STATUS_ACTIVE),
+        "sold_count": sum(1 for p in positions if p.status == SPRG_STATUS_SOLD),
+        "disabled_count": sum(1 for p in positions if p.status == SPRG_STATUS_DISABLED),
+        "total_sold_wei": sum(p.sold_amount_wei for p in positions),
+        "config": engine.get_config(),
+    }
+
+
+def position_report(pos: Position, price_feed: Optional[PriceFeedBase] = None) -> Dict[str, Any]:
+    out = pos.to_dict()
+    if price_feed:
+        snap = price_feed.get_price(pos.asset_id)
+        if snap:
+            out["current_price_wei"] = snap.price_wei
+            out["drop_bps_current"] = compute_drop_bps(pos.high_water_mark_wei, snap.price_wei)
+            out["would_trigger_drop"] = should_trigger_drop(snap.price_wei, pos.high_water_mark_wei, pos.drop_bps)
+            out["would_trigger_floor"] = should_trigger_floor(snap.price_wei, pos.floor_price_wei)
+    return out
+
+
+# -----------------------------------------------------------------------------
+# Simulation and backtest helpers
+# ------------------------------------------------------------------------------
+
+def simulate_price_path(initial_wei: int, steps: int, drift_bps_per_step: int, vol_bps: int) -> List[int]:
+    import random
+    path = [initial_wei]
+    for _ in range(steps - 1):
+        p = path[-1]
+        drift = p * drift_bps_per_step // SPRG_BPS_DENOM
+        vol = p * vol_bps // SPRG_BPS_DENOM
+        p_next = p + drift + random.randint(-vol, vol)
+        path.append(max(0, p_next))
+    return path
+
+
+def backtest_position(
+    high_wei: int,
+    floor_bps: int,
+    drop_bps: int,
+    price_path: List[int],
+    trigger_kind: int = SPRG_TRIGGER_KIND_BOTH,
+) -> Optional[int]:
+    floor_wei = compute_floor_price_wei(high_wei, floor_bps)
+    for i, p in enumerate(price_path):
+        if trigger_kind in (SPRG_TRIGGER_KIND_DROP, SPRG_TRIGGER_KIND_BOTH):
+            if should_trigger_drop(p, high_wei, drop_bps):
+                return i
+        if trigger_kind in (SPRG_TRIGGER_KIND_FLOOR, SPRG_TRIGGER_KIND_BOTH):
+            if should_trigger_floor(p, floor_wei):
+                return i
+    return None
+
+
+# -----------------------------------------------------------------------------
+# Cooldown and timing
+# ------------------------------------------------------------------------------
+
+def is_in_cooldown(position: Position, now: Optional[float] = None) -> bool:
+    now = now or time.time()
