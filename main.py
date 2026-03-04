@@ -835,3 +835,96 @@ def backtest_position(
 
 def is_in_cooldown(position: Position, now: Optional[float] = None) -> bool:
     now = now or time.time()
+    return position.cooldown_until > now
+
+
+def cooldown_remaining_sec(position: Position, now: Optional[float] = None) -> float:
+    now = now or time.time()
+    return max(0.0, position.cooldown_until - now)
+
+
+# -----------------------------------------------------------------------------
+# Position filters
+# ------------------------------------------------------------------------------
+
+def filter_positions_active(positions: List[Position]) -> List[Position]:
+    return [p for p in positions if p.status == SPRG_STATUS_ACTIVE]
+
+
+def filter_positions_by_asset(positions: List[Position], asset_id: str) -> List[Position]:
+    return [p for p in positions if p.asset_id == asset_id]
+
+
+def filter_positions_near_trigger(
+    positions: List[Position],
+    price_feed: PriceFeedBase,
+    within_bps: int = 500,
+) -> List[Position]:
+    out = []
+    for p in filter_positions_active(positions):
+        snap = price_feed.get_price(p.asset_id)
+        if not snap:
+            continue
+        drop_bps = compute_drop_bps(p.high_water_mark_wei, snap.price_wei)
+        if drop_bps >= p.drop_bps - within_bps or snap.price_wei <= p.floor_price_wei + (p.floor_price_wei * within_bps // SPRG_BPS_DENOM):
+            out.append(p)
+    return out
+
+
+# -----------------------------------------------------------------------------
+# Export / import positions
+# ------------------------------------------------------------------------------
+
+def export_positions_json(positions: List[Position]) -> str:
+    return json.dumps([p.to_dict() for p in positions], indent=2)
+
+
+def import_positions_from_json(engine: SpringaEngine, data: str, owner: str) -> List[Position]:
+    items = json.loads(data)
+    out = []
+    for d in items:
+        pos = engine.create_position(
+            owner=owner,
+            asset_id=d["asset_id"],
+            amount_wei=int(d["amount_wei"]),
+            initial_price_wei=int(d.get("high_water_mark_wei", d.get("initial_price_wei", 0))),
+            drop_bps=int(d.get("drop_bps", 2000)),
+            floor_bps=int(d.get("floor_bps", 500)),
+            trigger_kind=int(d.get("trigger_kind", SPRG_TRIGGER_KIND_BOTH)),
+        )
+        out.append(pos)
+    return out
+
+
+# -----------------------------------------------------------------------------
+# Wei and amount parsing
+# ------------------------------------------------------------------------------
+
+def parse_wei(s: str) -> int:
+    s = s.strip().upper().replace(",", "")
+    if s.endswith("ETH"):
+        return eth_to_wei(float(s[:-3].strip()))
+    if s.endswith("WEI"):
+        return int(s[:-3].strip())
+    return int(s)
+
+
+def format_eth(wei: int, decimals: int = 6) -> str:
+    return f"{wei_to_eth(wei):.{decimals}f} ETH"
+
+
+# -----------------------------------------------------------------------------
+# Guardian and keeper checks (repeated for clarity)
+# ------------------------------------------------------------------------------
+
+def is_guardian(engine: SpringaEngine, addr: str) -> bool:
+    return to_checksum_address(addr) == engine.guardian
+
+
+def is_keeper(engine: SpringaEngine, addr: str) -> bool:
+    a = to_checksum_address(addr)
+    return a == engine.keeper or a == engine.guardian
+
+
+# -----------------------------------------------------------------------------
+# High-water mark update batch
