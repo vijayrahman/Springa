@@ -556,3 +556,96 @@ class SpringaEngine:
             owner = to_checksum_address(owner)
             out = [p for p in out if p.owner == owner]
         return out
+
+    def list_orders(self, position_id: Optional[str] = None) -> List[SellOrder]:
+        out = list(self._sell_orders.values())
+        if position_id:
+            out = [o for o in out if o.position_id == position_id]
+        return out
+
+    def get_config(self) -> Dict[str, Any]:
+        return {
+            "guardian": self._guardian,
+            "treasury": self._treasury,
+            "fee_sink": self._fee_sink,
+            "keeper": self._keeper,
+            "sentinel": self._sentinel,
+            "default_cooldown_sec": self._default_cooldown_sec,
+            "version": SPRG_VERSION,
+        }
+
+    def export_state(self) -> Dict[str, Any]:
+        return {
+            "positions": {k: v.to_dict() for k, v in self._positions.items()},
+            "orders": {k: v.to_dict() for k, v in self._sell_orders.items()},
+            "whitelist": list(self._whitelist),
+            "config": self.get_config(),
+        }
+
+    def load_state(self, data: Dict[str, Any]) -> None:
+        self._positions.clear()
+        for k, v in data.get("positions", {}).items():
+            self._positions[k] = Position.from_dict(v)
+        self._sell_orders.clear()
+        for k, v in data.get("orders", {}).items():
+            self._sell_orders[k] = SellOrder(**{f: v.get(f) for f in ["order_id", "position_id", "asset_id", "amount_wei", "executed_price_wei", "executed_at", "tx_hash", "status"] if f in v})
+            o = self._sell_orders[k]
+            o.order_id = o.order_id or k
+        self._whitelist = set(data.get("whitelist", []))
+
+
+# -----------------------------------------------------------------------------
+# Validation helpers
+# ------------------------------------------------------------------------------
+
+def validate_address(s: str) -> bool:
+    s = s.replace("0x", "").lower()
+    return len(s) == 40 and all(c in "0123456789abcdef" for c in s)
+
+
+def validate_drop_bps(bps: int) -> bool:
+    return 0 <= bps <= SPRG_MAX_DROP_BPS
+
+
+def validate_floor_bps(bps: int) -> bool:
+    return SPRG_MIN_FLOOR_BPS <= bps <= SPRG_BPS_DENOM
+
+
+# -----------------------------------------------------------------------------
+# Serialization and persistence
+# ------------------------------------------------------------------------------
+
+def save_engine_state(engine: SpringaEngine, path: Union[str, Path]) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(engine.export_state(), f, indent=2)
+
+
+def load_engine_state(engine: SpringaEngine, path: Union[str, Path]) -> None:
+    path = Path(path)
+    if not path.exists():
+        return
+    with open(path) as f:
+        engine.load_state(json.load(f))
+
+
+# -----------------------------------------------------------------------------
+# Fee and treasury helpers (for autosell flow)
+# ------------------------------------------------------------------------------
+
+def compute_fee_wei(amount_wei: int, fee_bps: int) -> int:
+    return (amount_wei * fee_bps) // SPRG_BPS_DENOM
+
+
+def compute_net_after_fee(amount_wei: int, fee_bps: int) -> int:
+    return amount_wei - compute_fee_wei(amount_wei, fee_bps)
+
+
+# -----------------------------------------------------------------------------
+# Event / callback types (for integration)
+# ------------------------------------------------------------------------------
+
+TriggerCallback = Callable[[Position, PriceSnapshot, SellOrder], None]
+
+
