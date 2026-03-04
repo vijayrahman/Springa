@@ -1207,3 +1207,96 @@ def validate_address_list(addrs: List[str]) -> Tuple[List[str], List[str]]:
         else:
             invalid.append(a)
     return valid, invalid
+
+
+# -----------------------------------------------------------------------------
+# High-water mark from price feed
+# ------------------------------------------------------------------------------
+
+def refresh_high_water_marks_from_feed(
+    engine: SpringaEngine,
+    caller: str,
+    price_feed: Optional[PriceFeedBase] = None,
+) -> int:
+    feed = price_feed or engine._price_feed
+    updated = 0
+    for pos in filter_positions_active(engine.list_positions()):
+        snap = feed.get_price(pos.asset_id)
+        if not snap or snap.price_wei <= pos.high_water_mark_wei:
+            continue
+        try:
+            engine.update_high_water_mark(pos.position_id, caller, snap.price_wei)
+            updated += 1
+        except Exception:
+            pass
+    return updated
+
+
+# -----------------------------------------------------------------------------
+# Summary tables (text)
+# ------------------------------------------------------------------------------
+
+def positions_table(positions: List[Position], price_feed: Optional[PriceFeedBase] = None) -> str:
+    lines = ["position_id | owner | asset_id | amount_wei | hwm | floor | status"]
+    for p in positions:
+        status = status_display(p.status)
+        owner_short = truncate_address(p.owner)
+        line = f"{p.position_id[:16]}... | {owner_short} | {p.asset_id} | {p.amount_wei} | {p.high_water_mark_wei} | {p.floor_price_wei} | {status}"
+        if price_feed:
+            snap = price_feed.get_price(p.asset_id)
+            if snap:
+                drop = compute_drop_bps(p.high_water_mark_wei, snap.price_wei)
+                line += f" | drop_bps={drop}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def orders_table(orders: List[SellOrder]) -> str:
+    lines = ["order_id | position_id | asset_id | amount_wei | price_wei | executed_at"]
+    for o in orders:
+        lines.append(f"{o.order_id[:16]}... | {o.position_id[:16]}... | {o.asset_id} | {o.amount_wei} | {o.executed_price_wei} | {o.executed_at}")
+    return "\n".join(lines)
+
+
+# -----------------------------------------------------------------------------
+# Idempotent position creation (by external id)
+# ------------------------------------------------------------------------------
+
+def get_or_create_position(
+    engine: SpringaEngine,
+    owner: str,
+    asset_id: str,
+    amount_wei: int,
+    initial_price_wei: int,
+    external_id: str,
+    drop_bps: int = 2000,
+    floor_bps: int = 500,
+) -> Position:
+    for pos in engine.list_positions(owner=owner):
+        if pos.metadata.get("external_id") == external_id:
+            return pos
+    pos = engine.create_position(owner, asset_id, amount_wei, initial_price_wei, drop_bps=drop_bps, floor_bps=floor_bps)
+    pos.metadata["external_id"] = external_id
+    return pos
+
+
+# -----------------------------------------------------------------------------
+# Fee calculation for autosell
+# ------------------------------------------------------------------------------
+
+SPRG_DEFAULT_FEE_BPS = 30
+
+
+def compute_autosell_fee(amount_wei: int, fee_bps: int = SPRG_DEFAULT_FEE_BPS) -> int:
+    return safe_bps_multiply(amount_wei, fee_bps)
+
+
+def compute_autosell_net(amount_wei: int, fee_bps: int = SPRG_DEFAULT_FEE_BPS) -> int:
+    return amount_wei - compute_autosell_fee(amount_wei, fee_bps)
+
+
+# -----------------------------------------------------------------------------
+# Domain and salt helpers
+# ------------------------------------------------------------------------------
+
+def get_domain_hash() -> str:
