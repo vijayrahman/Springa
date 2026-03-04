@@ -1300,3 +1300,96 @@ def compute_autosell_net(amount_wei: int, fee_bps: int = SPRG_DEFAULT_FEE_BPS) -
 # ------------------------------------------------------------------------------
 
 def get_domain_hash() -> str:
+    return SPRG_DOMAIN_HASH
+
+
+def get_config_salt() -> int:
+    return SPRG_CONFIG_SALT
+
+
+def get_default_fee_bps() -> int:
+    return SPRG_DEFAULT_FEE_BPS
+
+
+# -----------------------------------------------------------------------------
+# Position ID from hash (deterministic)
+# ------------------------------------------------------------------------------
+
+def position_id_from_params(owner: str, asset_id: str, created_ts: int) -> str:
+    payload = f"{owner}_{asset_id}_{created_ts}"
+    return "0x" + hashlib.sha256(payload.encode()).hexdigest()[:32]
+
+
+# -----------------------------------------------------------------------------
+# Batch disable / enable
+# ------------------------------------------------------------------------------
+
+def batch_disable_positions(engine: SpringaEngine, caller: str, position_ids: List[str]) -> List[Position]:
+    out = []
+    for pid in position_ids:
+        try:
+            pos = engine.disable_position(pid, caller)
+            out.append(pos)
+        except Exception:
+            pass
+    return out
+
+
+def batch_enable_positions(engine: SpringaEngine, caller: str, position_ids: List[str]) -> List[Position]:
+    out = []
+    for pid in position_ids:
+        try:
+            pos = engine.enable_position(pid, caller)
+            out.append(pos)
+        except Exception:
+            pass
+    return out
+
+
+# -----------------------------------------------------------------------------
+# Snapshot current state for audit
+# ------------------------------------------------------------------------------
+
+def audit_snapshot(engine: SpringaEngine) -> Dict[str, Any]:
+    positions = [p.to_dict() for p in engine.list_positions()]
+    orders = [o.to_dict() for o in engine.list_orders()]
+    return {
+        "timestamp": time.time(),
+        "config": engine.get_config(),
+        "positions": positions,
+        "orders": orders,
+        "whitelist": list(engine._whitelist),
+        "stats": engine_stats(engine),
+    }
+
+
+# -----------------------------------------------------------------------------
+# Min/max bounds
+# ------------------------------------------------------------------------------
+
+def get_min_floor_bps() -> int:
+    return SPRG_MIN_FLOOR_BPS
+
+
+def get_max_drop_bps() -> int:
+    return SPRG_MAX_DROP_BPS
+
+
+def get_min_cooldown_sec() -> int:
+    return SPRG_MIN_COOLDOWN_SEC
+
+
+def get_max_cooldown_sec() -> int:
+    return SPRG_MAX_COOLDOWN_SEC
+
+
+# -----------------------------------------------------------------------------
+# Price feed from dict (for testing)
+# ------------------------------------------------------------------------------
+
+def mock_feed_from_prices(prices: Dict[str, int]) -> MockPriceFeed:
+    return MockPriceFeed(prices=prices)
+
+
+# -----------------------------------------------------------------------------
+# Position from dict (rehydrate without engine)
