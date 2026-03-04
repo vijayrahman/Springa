@@ -1393,3 +1393,95 @@ def mock_feed_from_prices(prices: Dict[str, int]) -> MockPriceFeed:
 
 # -----------------------------------------------------------------------------
 # Position from dict (rehydrate without engine)
+# ------------------------------------------------------------------------------
+
+def position_from_dict(d: Dict[str, Any]) -> Position:
+    return Position.from_dict(d)
+
+
+# -----------------------------------------------------------------------------
+# Check if position would trigger at given price
+# ------------------------------------------------------------------------------
+
+def would_trigger_at_price(position: Position, price_wei: int) -> bool:
+    if position.status != SPRG_STATUS_ACTIVE:
+        return False
+    if position.trigger_kind == SPRG_TRIGGER_KIND_DROP:
+        return should_trigger_drop(price_wei, position.high_water_mark_wei, position.drop_bps)
+    if position.trigger_kind == SPRG_TRIGGER_KIND_FLOOR:
+        return should_trigger_floor(price_wei, position.floor_price_wei)
+    return should_trigger_drop(price_wei, position.high_water_mark_wei, position.drop_bps) or should_trigger_floor(price_wei, position.floor_price_wei)
+
+
+# -----------------------------------------------------------------------------
+# Safe position creation with defaults
+# ------------------------------------------------------------------------------
+
+def create_position_safe(
+    engine: SpringaEngine,
+    owner: str,
+    asset_id: str,
+    amount_wei: int,
+    initial_price_wei: int,
+    drop_bps: Optional[int] = None,
+    floor_bps: Optional[int] = None,
+) -> Position:
+    drop_bps = clamp_drop_bps(drop_bps if drop_bps is not None else 2000)
+    floor_bps = clamp_floor_bps(floor_bps if floor_bps is not None else 500)
+    return engine.create_position(owner, asset_id, amount_wei, initial_price_wei, drop_bps=drop_bps, floor_bps=floor_bps)
+
+
+# -----------------------------------------------------------------------------
+# Version and domain info
+# ------------------------------------------------------------------------------
+
+def get_version() -> str:
+    return SPRG_VERSION
+
+
+def get_guardian_domain() -> str:
+    return SPRG_GUARDIAN_DOMAIN
+
+
+# -----------------------------------------------------------------------------
+# Immutable config snapshot (no reassignment of addresses)
+# ------------------------------------------------------------------------------
+
+def immutable_config_snapshot(
+    guardian: str = SPRG_GUARDIAN_ADDRESS,
+    treasury: str = SPRG_TREASURY_ADDRESS,
+    fee_sink: str = SPRG_FEE_SINK_ADDRESS,
+    keeper: str = SPRG_KEEPER_ADDRESS,
+    sentinel: str = SPRG_SENTINEL_ADDRESS,
+) -> Dict[str, str]:
+    return {
+        "guardian": to_checksum_address(guardian),
+        "treasury": to_checksum_address(treasury),
+        "fee_sink": to_checksum_address(fee_sink),
+        "keeper": to_checksum_address(keeper),
+        "sentinel": to_checksum_address(sentinel),
+    }
+
+
+# -----------------------------------------------------------------------------
+# BPS denom and limits (for external use)
+# ------------------------------------------------------------------------------
+
+def get_bps_denom() -> int:
+    return SPRG_BPS_DENOM
+
+
+def get_max_drop_bps_limit() -> int:
+    return SPRG_MAX_DROP_BPS
+
+
+def get_default_cooldown_sec() -> int:
+    return SPRG_DEFAULT_COOLDOWN_SEC
+
+
+def get_trigger_kind_drop() -> int:
+    return SPRG_TRIGGER_KIND_DROP
+
+
+def get_trigger_kind_floor() -> int:
+    return SPRG_TRIGGER_KIND_FLOOR
